@@ -1,0 +1,90 @@
+from binance.client import Client
+import time
+import pandas as pd
+
+# 1. Ρύθμιση API Keys
+API_KEY = "Η_API_KEY"
+API_SECRET = "Η_API_SECRET"
+
+# 2. Σύνδεση με Binance
+client = Client(API_KEY, API_SECRET)
+
+# 3. Ρυθμίσεις χρήστη
+symbol = "LINKUSDT"  # Το ζεύγος που θέλεις να παρακολουθείς
+quantity = 20    # Ποσότητα προς αγορά/πώληση
+interval = "3m"     # Χρονικό διάστημα για τα κεριά (1 λεπτό)
+
+# 4. Βοηθητική συνάρτηση για λήψη δεδομένων κεριών
+def get_candles(symbol, interval):
+    candles = client.get_klines(symbol=symbol, interval=interval)
+    df = pd.DataFrame(candles, columns=[
+        'open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time',
+        'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume',
+        'taker_buy_quote_asset_volume', 'ignore'
+    ])
+    df['open'] = df['open'].astype(float)
+    df['close'] = df['close'].astype(float)
+    df['high'] = df['high'].astype(float)
+    df['low'] = df['low'].astype(float)
+    return df
+
+# 5. Κύρια λειτουργία
+
+def trading_bot():
+    last_red_candle_close = None
+    last_green_candle_close = None
+    last_green_candle_duration = 0  # Διάρκεια του προηγούμενου πράσινου κεριού
+
+    while True:
+        try:
+            # Λήψη δεδομένων κεριών
+            df = get_candles(symbol, interval)
+
+            # Επιλογή του τελευταίου, του προτελευταίου και του προ-προτελευταίου κεριού
+            last_candle = df.iloc[-1]
+            prev_candle = df.iloc[-2]
+            prev_prev_candle = df.iloc[-3]
+
+            # Έλεγχος για κόκκινο κερί με προηγούμενο πράσινο
+            if prev_candle['close'] < prev_candle['open'] and prev_prev_candle['close'] > prev_prev_candle['open']:
+                last_red_candle_close = prev_candle['close']
+                last_green_candle_duration = prev_prev_candle['close_time'] - prev_prev_candle['open_time']
+
+            # Έλεγχος για πράσινο κερί που περνάει την τιμή του τελευταίου κόκκινου κεριού
+            if last_red_candle_close and last_candle['close'] > last_red_candle_close and last_candle['open'] < last_red_candle_close:
+                print("\nΕκτέλεση εντολής αγοράς...")
+                order = client.create_order(
+                    symbol=symbol,
+                    side=Client.SIDE_BUY,
+                    type=Client.ORDER_TYPE_MARKET,
+                    quantity=quantity
+                )
+                print("Εντολή αγοράς ολοκληρώθηκε:", order)
+
+                # Κρατάμε το trade ανοιχτό για τη διάρκεια του προηγούμενου πράσινου κεριού
+                print(f"Αναμονή για {last_green_candle_duration / 1000} δευτερόλεπτα πριν το κλείσιμο του trade...")
+                time.sleep(last_green_candle_duration / 1000)
+
+                # Κλείσιμο του trade (πώληση)
+                print("\nΕκτέλεση εντολής πώλησης...")
+                sell_order = client.create_order(
+                    symbol=symbol,
+                    side=Client.SIDE_SELL,
+                    type=Client.ORDER_TYPE_MARKET,
+                    quantity=quantity
+                )
+                print("Εντολή πώλησης ολοκληρώθηκε:", sell_order)
+
+                # Επαναφορά της τιμής του τελευταίου κόκκινου κεριού
+                last_red_candle_close = None
+
+            # Περίμενε πριν την επόμενη επανάληψη
+            time.sleep(5)
+
+        except Exception as e:
+            print("Σφάλμα:", e)
+            time.sleep(5)
+
+# 6. Εκκίνηση bot
+if __name__ == "__main__":
+    trading_bot()
